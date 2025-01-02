@@ -3,7 +3,9 @@ import re
 import csv
 import time
 import pytz
-from datetime import datetime,timedelta
+import zipfile
+import rarfile
+from datetime import datetime, timedelta
 from telethon.sync import TelegramClient
 
 # Telegram API 정보
@@ -20,22 +22,59 @@ base_download_path = './downloads'
 def format_file_name(channel_name, message):
     """파일명을 '채널명_파일명_업로드시간.확장자' 형식으로 생성"""
     try:
+        # 파일 이름 확인
+        if not message.file or not message.file.name:
+            #print(f"파일 이름이 없습니다. 메시지 ID: {message.id}, 건너뜁니다.")
+            return None  # 파일 이름이 없으면 None 반환
+        
         # 메시지 작성 시간 (UTC -> 로컬 시간 변환)
         local_date = message.date.astimezone(local_tz)
         upload_time = local_date.strftime("%Y%m%d_%H%M%S")  # YYYYMMDD_HHMMSS 형식
 
-        # 기본 파일명 설정
-        file_name = message.file.name or f"{message.id}.txt"
-        file_ext = os.path.splitext(file_name)[1] or ".txt"  # 확장자 기본값 추가
+        # 파일 이름 및 확장자 설정
+        file_name = message.file.name
+        file_ext = os.path.splitext(file_name)[1] or ".txt"  # 확장자가 없는 경우 기본 확장자
         formatted_name = f"{upload_time}_{os.path.splitext(file_name)[0]}{file_ext}"
         return formatted_name
     except Exception as e:
         print(f"파일명 포맷팅 오류: {e}")
-        return f"{message.id}.txt"  # 기본값 반환
+        return None  # 오류 발생 시 None 반환
+
+def extract_zip(file_path, extract_path):
+    """ZIP 파일 압축 해제"""
+    try:
+        with zipfile.ZipFile(file_path, 'r') as zip_ref:
+            zip_ref.testzip()  # 압축 파일이 정상적인지 검사
+            zip_ref.extractall(extract_path)  # 압축 해제
+        return True
+    except zipfile.BadZipFile:
+        print(f"ZIP 파일이 깨졌습니다: {file_path}")
+    except RuntimeError:  # 비밀번호가 걸려있을 때 발생하는 오류
+        print(f"ZIP 파일에 비밀번호가 걸려있습니다: {file_path}")
+    return False
+
+def extract_rar(file_path, extract_path):
+    """RAR 파일 압축 해제"""
+    try:
+        with rarfile.RarFile(file_path) as rar_ref:
+            rar_ref.test()  # 압축 파일이 정상적인지 검사
+            rar_ref.extractall(extract_path)  # 압축 해제
+        return True
+    except rarfile.BadRarFile:
+        print(f"RAR 파일이 깨졌습니다: {file_path}")
+    except rarfile.PasswordRequired:
+        print(f"RAR 파일에 비밀번호가 걸려있습니다: {file_path}")
+    return False
+
+ALLOWED_EXTENSIONS = {".txt", ".zip", ".rar"}  # 허용된 파일 확장자 목록
 
 def download_files_from_channel(client, channel):
-    """특정 채널의 파일 다운로드 및 처리"""
+    """특정 채널의 파일 다운로드 및 텍스트 파일 처리"""
+    print("")
+    print("===============================================")
     print(f"채널 다운로드 시작: {channel.title}")
+    print("===============================================")
+
     messages = client.iter_messages(channel)
 
     # 채널별 디렉토리 생성
@@ -44,14 +83,13 @@ def download_files_from_channel(client, channel):
 
     try:
         for message in messages:
-            if message.file and os.path.splitext(message.file.name)[1].lower() == '.txt':  # .txt 파일만 다운로드
+            if message.file:  # 파일이 있는 메시지만 처리
                 try:
                     # 메시지 작성 시간 (로컬 시간 변환)
                     local_date = message.date.astimezone(local_tz)
                     formatted_time = local_date.strftime("%Y-%m-%d %H:%M:%S")
-                    
 
-                   # 파일 작성 시간 (datetime 객체로 변환)
+                    # 파일 작성 시간 (datetime 객체로 변환)
                     file_time = local_date
 
                     # 현재 시간 구하기 (로컬 시간대 적용)
@@ -59,40 +97,47 @@ def download_files_from_channel(client, channel):
 
                     # 24시간 이상 차이가 나면 처리하지 않음
                     if now - file_time > timedelta(hours=24):
-                        print(f"파일 작성 시간이 24시간 전입니다. 파일 {message.id}는 건너뜁니다.")
+                        #print(f"파일 작성 시간이 24시간 전입니다. 파일 {message.id}는 건너뜁니다.")
                         continue
 
-
-
+                    # 파일명 생성
                     file_name = format_file_name(channel.title, message)
-                    if file_name is None:
+                    if not file_name:
                         continue
 
                     file_path = os.path.join(channel_path, file_name)
 
+                    # 파일이 이미 존재하면 다운로드는 건너뛰고 처리로 바로 이동
                     if os.path.exists(file_path):
                         print(f"파일이 이미 존재합니다: {file_name} (다운로드 건너뜀)")
-                        # 텍스트 파일 처리
-                        process_text_files(channel_path, "output.csv", channel.title, formatted_time)
-                        continue
+                    else:
+                        # 파일 다운로드
+                        print(f"다운로드 중: {file_name}")
+                        message.download_media(file=file_path)
 
+                        # 압축 파일 처리
+                        if file_name.endswith('.zip'):
+                            if not extract_zip(file_path, channel_path):
+                                continue  # 압축 해제 실패 시 건너뜀
+                        elif file_name.endswith('.rar'):
+                            if not extract_rar(file_path, channel_path):
+                                continue  # 압축 해제 실패 시 건너뜀
 
-                    print(f"다운로드 중: {file_name} (작성 시간: {formatted_time})")
-                    message.download_media(file=file_path)
-                    
-                    # 다운로드 성공 후 즉시 텍스트 파일 처리
+                    # 텍스트 파일 처리 호출
+                    print(f"텍스트 파일 처리 중: {file_name}")
                     process_text_files(channel_path, "output.csv", channel.title, formatted_time)
-                    
+
                 except Exception as e:
-                    print(f"파일 다운로드 오류: {e}")
+                    print(f"파일 다운로드 또는 처리 오류: {e}")
     except Exception as e:
         print(f"채널 메시지 순회 오류: {channel.title} - {e}")
+
 
 
 def process_text_files(folder_path, output_csv, channel_name, formatted_time):
     """폴더 내 텍스트 파일을 처리하여 CSV로 저장 (채널 이름 포함)"""
     # 필터링할 도메인 목록
-    filter_domains = ["naver.com", "test.com", "test1.com"]
+    filter_domains = ["NAVER.COM", "NAVER.COM", "NAVER.COM"]
 
     # 기존 CSV 데이터 로드 (중복 방지용 데이터 로드)
     existing_data = set()
@@ -168,8 +213,6 @@ def process_text_files(folder_path, output_csv, channel_name, formatted_time):
             print(f"CSV 저장 오류: {e}")
     else:
         print("저장할 데이터가 없습니다. CSV를 생성하지 않습니다.")
-
-
 
 def main():
     with TelegramClient('session_name', api_id, api_hash) as client:
