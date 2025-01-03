@@ -105,6 +105,12 @@ def download_files_from_channel(client, channel):
                     if not file_name:
                         continue
 
+                    # 파일 확장자 확인
+                    file_ext = os.path.splitext(file_name)[1].lower()  # 확장자 추출
+                    if file_ext not in ALLOWED_EXTENSIONS:
+                        print(f"허용되지 않은 확장자: {file_name} (건너뜀)")
+                        continue
+
                     file_path = os.path.join(channel_path, file_name)
 
                     # 파일이 이미 존재하면 다운로드는 건너뛰고 처리로 바로 이동
@@ -112,7 +118,9 @@ def download_files_from_channel(client, channel):
                         print(f"파일이 이미 존재합니다: {file_name} (다운로드 건너뜀)")
                     else:
                         # 파일 다운로드
-                        print(f"다운로드 중: {file_name}")
+                        print(f"file: {file_name}")
+                        print(f"파일 다운로드 중...")
+
                         message.download_media(file=file_path)
 
                         # 압축 파일 처리
@@ -124,9 +132,9 @@ def download_files_from_channel(client, channel):
                                 continue  # 압축 해제 실패 시 건너뜀
 
                     # 텍스트 파일 처리 호출
-                    print(f"텍스트 파일 처리 중: {file_name}")
+                    print(f"텍스트 파일 처리 중...")
                     process_text_files(channel_path, "output.csv", channel.title, formatted_time)
-
+                    print("-------------------")
                 except Exception as e:
                     print(f"파일 다운로드 또는 처리 오류: {e}")
     except Exception as e:
@@ -134,15 +142,16 @@ def download_files_from_channel(client, channel):
 
 
 
+
 def process_text_files(folder_path, output_csv, channel_name, formatted_time):
     """폴더 내 텍스트 파일을 처리하여 CSV로 저장 (채널 이름 포함)"""
     # 필터링할 도메인 목록
-    filter_domains = ["NAVER.COM", "NAVER.COM", "NAVER.COM"]
+    filter_domains = ["assembly.go.kr", "nanet.go.kr", "nabo.go.kr", "na.go.kr", "nars.go.kr"]
 
     # 기존 CSV 데이터 로드 (중복 방지용 데이터 로드)
     existing_data = set()
     if os.path.exists(output_csv):
-        print(f"기존 CSV 파일 로드: {output_csv}")
+        #print(f"기존 CSV 파일 로드: {output_csv}")
         with open(output_csv, "r", encoding="utf-8") as csvfile:
             csv_reader = csv.reader(csvfile)
             next(csv_reader, None)  # 헤더 스킵
@@ -208,11 +217,11 @@ def process_text_files(folder_path, output_csv, channel_name, formatted_time):
                         data["formatted_time"]
                     ]
                     csv_writer.writerow(row)
-            print(f"CSV 생성 및 데이터 추가 완료: {output_csv}")
+            print(f"CSV 데이터 추가 완료.")
         except Exception as e:
             print(f"CSV 저장 오류: {e}")
     else:
-        print("저장할 데이터가 없습니다. CSV를 생성하지 않습니다.")
+        print("저장할 데이터가 없습니다.")
 
 def main():
     with TelegramClient('session_name', api_id, api_hash) as client:
@@ -220,10 +229,12 @@ def main():
         channels = [dialog.entity for dialog in dialogs if dialog.is_channel]
 
         print(f"가입한 채널 수: {len(channels)}")
-
+        channel_count = 0
         for channel in channels:
             try:
                 download_files_from_channel(client, channel)
+                channel_count += 1  # 채널 진행 상태를 1씩 증가
+                print(f"진행률: {channel_count} / {len(channels)}")
             except Exception as e:
                 print(f"채널 다운로드 중 오류 발생: {channel.title} - {e}")
 
@@ -231,3 +242,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
